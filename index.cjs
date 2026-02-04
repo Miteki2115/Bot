@@ -9983,7 +9983,7 @@ try {
   console.error("[WS_TEST] Błąd tworzenia WebSocket:", err.message);
 }
 
-// Prosta funkcja retry z backoffem i obsługą 429
+// Prosta funkcja retry z backoffem i obsługą 429 + diagnostyka
 async function loginWithRetry(maxRetries = 5) {
   for (let i = 0; i < maxRetries; i++) {
     try {
@@ -9994,7 +9994,10 @@ async function loginWithRetry(maxRetries = 5) {
         console.warn(`[LOGIN] Logowanie trwa długo (>30s) — czekam na odpowiedź Discorda...`);
       }, 30000);
 
-      await client.login(process.env.BOT_TOKEN);
+      const hardTimeout = new Promise((_, reject) => setTimeout(() => reject(new Error('LOGIN_HARD_TIMEOUT_90S')), 90000));
+
+      await Promise.race([client.login(process.env.BOT_TOKEN), hardTimeout]);
+
       clearTimeout(slowLoginWarning);
 
       console.log("[LOGIN] Sukces! Bot połączony z Discord.");
@@ -10005,6 +10008,13 @@ async function loginWithRetry(maxRetries = 5) {
       const backoff = is429 ? Math.max(retryAfterHeader, 30000) : 10000 * (i + 1);
 
       console.error(`[LOGIN] Błąd próby ${i + 1}:`, err?.message || err);
+      if (err?.code) console.error(`[LOGIN] err.code=${err.code}`);
+      if (err?.status) console.error(`[LOGIN] err.status=${err.status}`);
+      if (err?.data?.retry_after) console.error(`[LOGIN] retry_after=${err.data.retry_after}`);
+
+      if (err?.name === 'DiscordAPIError' && err?.rawError) {
+        console.error('[LOGIN] rawError:', err.rawError);
+      }
 
       if (i < maxRetries - 1) {
         console.log(`[LOGIN] Czekam ${Math.round(backoff / 1000)}s przed kolejną próbą...`);
