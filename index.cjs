@@ -9983,31 +9983,38 @@ try {
   console.error("[WS_TEST] Błąd tworzenia WebSocket:", err.message);
 }
 
-// Prosta funkcja retry
-async function loginWithRetry(maxRetries = 3) {
+// Prosta funkcja retry z backoffem i obsługą 429
+async function loginWithRetry(maxRetries = 5) {
   for (let i = 0; i < maxRetries; i++) {
     try {
-      console.log(`[LOGIN] Próba ${i + 1}/${maxRetries}...`);
-      
-      // Dodaj timeout do login
-      const loginPromise = client.login(process.env.BOT_TOKEN);
-      const timeoutPromise = new Promise((_, reject) => {
-        setTimeout(() => reject(new Error('Login timeout po 20 sekundach')), 20000);
-      });
-      
-      await Promise.race([loginPromise, timeoutPromise]);
+      const attempt = i + 1;
+      console.log(`[LOGIN] Próba ${attempt}/${maxRetries}...`);
+
+      const slowLoginWarning = setTimeout(() => {
+        console.warn(`[LOGIN] Logowanie trwa długo (>30s) — czekam na odpowiedź Discorda...`);
+      }, 30000);
+
+      await client.login(process.env.BOT_TOKEN);
+      clearTimeout(slowLoginWarning);
+
       console.log("[LOGIN] Sukces! Bot połączony z Discord.");
       return;
     } catch (err) {
-      console.error(`[LOGIN] Błąd próby ${i + 1}:`, err.message);
+      const is429 = err?.code === 429 || /429/.test(err?.message || "");
+      const retryAfterHeader = Number(err?.data?.retry_after || err?.retry_after || 0) * 1000;
+      const backoff = is429 ? Math.max(retryAfterHeader, 30000) : 10000 * (i + 1);
+
+      console.error(`[LOGIN] Błąd próby ${i + 1}:`, err?.message || err);
+
       if (i < maxRetries - 1) {
-        console.log(`[LOGIN] Czekam 10 sekund przed kolejną próbą...`);
-        await new Promise(resolve => setTimeout(resolve, 10000));
+        console.log(`[LOGIN] Czekam ${Math.round(backoff / 1000)}s przed kolejną próbą...`);
+        await new Promise(resolve => setTimeout(resolve, backoff));
       }
     }
   }
+
   console.error("[LOGIN] Wszystkie próby nieudane!");
-  
+
   // Sprawdź połączenie sieciowe
   console.log("[NETWORK] Sprawdzam połączenie z Discord API...");
   try {
@@ -10079,4 +10086,7 @@ app.get('/health', (req, res) => {
   res.status(isHealthy ? 200 : 503).json(status, null, 2);
 });
 
-app.listen(3000);
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`[HTTP] Status endpoint nasłuchuje na porcie ${PORT}`);
+});
